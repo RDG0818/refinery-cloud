@@ -1,0 +1,16 @@
+{
+  "@id": "dtmi:com:refinery:Pump;1",
+  "@type": "Interface",
+  "@context": "dtmi:dtdl:context;2",
+  "displayName": "Refinery Pump",
+  "contents": [
+    { "@type": "Property", "name": "status", "schema": "string" },
+    { "@type": "Property", "name": "isConnected", "schema": "boolean" },
+    {
+      "@type": "Relationship",
+      "name": "feedsNetworkTo",
+      "target": "dtmi:com:refinery:Sensor;1",
+      "displayName": "Feeds Data To"
+    }
+  ]
+}

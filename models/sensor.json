@@ -1,0 +1,11 @@
+{
+  "@id": "dtmi:com:refinery:Sensor;1",
+  "@type": "Interface",
+  "@context": "dtmi:dtdl:context;2",
+  "displayName": "Refinery Sensor",
+  "contents": [
+    { "@type": "Property", "name": "status", "schema": "string" },
+    { "@type": "Property", "name": "isConnected", "schema": "boolean" },
+    { "@type": "Property", "name": "readingType", "schema": "string" }
+  ]
+}

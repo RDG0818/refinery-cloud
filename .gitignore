@@ -1,0 +1,9 @@
+# Python / Functions
+cascade-function/local.settings.json
+cascade-function/.venv/
+cascade-function/__pycache__/
+*.pyc
+
+# Node / React
+refinery-dashboard/node_modules/
+refinery-dashboard/dist/

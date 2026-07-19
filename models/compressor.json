@@ -1,0 +1,15 @@
+{
+  "@id": "dtmi:com:refinery:Compressor;1",
+  "@type": "Interface",
+  "@context": "dtmi:dtdl:context;2",
+  "displayName": "Refinery Compressor",
+  "contents": [
+    { "@type": "Property", "name": "status", "schema": "string" },
+    {
+      "@type": "Relationship",
+      "name": "feedsNetworkTo",
+      "target": "dtmi:com:refinery:Pump;1",
+      "displayName": "Feeds Pressure To"
+    }
+  ]
+}
