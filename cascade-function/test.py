@@ -1,4 +1,4 @@
-from cascade_logic import get_adt_client, find_downstream_twins, cascade_failure
+from cascade_logic import get_adt_client
 import json
 client = get_adt_client()
 query = f"Select * FROM digitaltwins"

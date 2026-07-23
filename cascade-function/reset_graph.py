@@ -1,9 +1,10 @@
 """
 reset_graph.py
 
-Standalone script (not part of the deployed Function) to reset every
-twin in the refinery graph back to a healthy baseline state. Useful
-for re-running tests without leftover state from a previous cascade.
+Standalone script (not part of the deployed Function) to reset the switch
+graph back to a healthy baseline: sets every connectedTo relationship's
+linkStatus back to "up", then recomputes reachability from the gateway so
+every twin's status flips back to "online".
 
 Run with: python reset_graph.py
 Requires ADT_ENDPOINT to be exported in your shell first (same as
@@ -11,45 +12,37 @@ your other isolation testing).
 """
 
 import logging
-from cascade_logic import get_adt_client, find_downstream_twins
+from cascade_logic import get_adt_client
+from reachability_logic import recompute_reachability, GATEWAY_ID
 
 
-def reset_twin_to_healthy(client, twin_id: str, is_source: bool = False) -> None:
-    """Patch a single twin back to a healthy state."""
-    if is_source: 
-        patch = [    
-          {"op": "replace", "path": "/status", "value": "online"}
-        ] 
-    else:
-        patch = [    
-          {"op": "replace", "path": "/isConnected", "value": True},
-          {"op": "replace", "path": "/status", "value": "online"}
-        ]
+def reset_all_links(client) -> None:
+    """Walk every twin's outgoing connectedTo relationships and set
+    linkStatus back to 'up'."""
+    all_twins = list(client.query_twins("SELECT * FROM digitaltwins"))
 
-    client.update_digital_twin(twin_id, patch)
+    for twin in all_twins:
+        twin_id = twin["$dtId"]
+        for rel in client.list_relationships(twin_id):
+            if rel.get("$relationshipName") != "connectedTo":
+                continue
+            relationship_id = rel["$relationshipId"]
+            patch = [{"op": "replace", "path": "/linkStatus", "value": "up"}]
+            client.update_relationship(twin_id, relationship_id, patch)
+            logging.info(f"Reset link {twin_id} -> {rel['$targetId']} to up")
 
 
-
-def reset_graph(client, source_twin_id: str) -> None:
-    """
-    Walk the graph from the source twin and reset every twin found
-    -- source and all downstream descendants -- back to healthy.
-    """
-
-    reset_twin_to_healthy(client, source_twin_id, is_source=True)
-    frontier = [source_twin_id]
-    while not len(frontier) == 0:
-      twin_id = frontier.pop(0)
-      downstream_twins = find_downstream_twins(client, twin_id)
-      for twin in downstream_twins:
-          reset_twin_to_healthy(client, twin)
-          logging.info(f"Reset {twin} to online.")
-          frontier.append(twin)
+def reset_graph(client) -> None:
+    """Reset every link to up, then recompute reachability so every twin's
+    status flips back to online."""
+    reset_all_links(client)
+    transitions = recompute_reachability(client, GATEWAY_ID)
+    for twin_id, event_type in transitions:
+        logging.info(f"{twin_id}: {event_type}")
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     client = get_adt_client()
-    reset_graph(client, "Compressor-01")
+    reset_graph(client)
     print("Graph reset complete.")
-    

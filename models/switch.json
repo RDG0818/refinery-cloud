@@ -1,0 +1,21 @@
+{
+  "@id": "dtmi:com:refinery:Switch;1",
+  "@type": "Interface",
+  "@context": "dtmi:dtdl:context;2",
+  "displayName": "DMZ Network Switch",
+  "contents": [
+      { "@type": "Property", "name": "status", "schema": "string" },
+      { "@type": "Property", "name": "zone", "schema": "string"},
+      { "@type": "Property", "name": "ipAddress", "schema": "string"},
+      { "@type": "Property", "name": "isGateway", "schema": "boolean" },
+      {
+        "@type": "Relationship",
+        "name": "connectedTo",
+        "target": "dtmi:com:refinery:Switch;1",
+        "displayName": "Connected To",
+        "properties": [
+          { "@type": "Property", "name": "linkStatus", "schema": "string" }
+        ]
+      }
+    ]
+}
