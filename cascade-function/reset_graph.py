@@ -1,15 +1,9 @@
-"""
-reset_graph.py
+"""Standalone script to reset the switch graph to a healthy baseline: sets
+every link back to "up", then recomputes reachability so every twin
+flips back to "online".
 
-Standalone script (not part of the deployed Function) to reset the switch
-graph back to a healthy baseline: sets every connectedTo relationship's
-linkStatus back to "up", then recomputes reachability from the gateway so
-every twin's status flips back to "online".
-
-Run with: python reset_graph.py
-Requires ADT_ENDPOINT to be exported in your shell first (same as
-your other isolation testing).
-"""
+Run: python reset_graph.py
+Requires ADT_ENDPOINT."""
 
 import logging
 from cascade_logic import get_adt_client

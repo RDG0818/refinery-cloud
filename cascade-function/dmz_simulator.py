@@ -1,21 +1,9 @@
-"""
-dmz_simulator.py
+"""Standalone script (not deployed, local only) that sends simulated link
+up/down telemetry to IoT Hub, replacing the manual `az iot device
+send-d2c-message` calls from SETUP_GUIDE.md for a continuous demo.
 
-Standalone script (not part of the deployed Function, not in
-requirements.txt -- only needs azure-iot-device installed locally) that
-sends simulated link up/down telemetry for the refinery DMZ switch mesh
-to IoT Hub. Replaces the manual `az iot device send-d2c-message` calls
-from SETUP_GUIDE.md with something that runs continuously for a demo.
-
-Only one IoT Hub device is used ("dmz-simulator") -- LinkEventProcessor
-reads sourceSwitch/targetSwitch straight out of the message body, not
-from IoT Hub device identity, so there's no need to register one device
-per switch.
-
-Run with: python dmz_simulator.py
-Requires IOT_DEVICE_CONNECTION_STRING to be exported in your shell
-(the connection string for the "dmz-simulator" IoT Hub device).
-"""
+Run: python dmz_simulator.py
+Requires IOT_DEVICE_CONNECTION_STRING (the "dmz-simulator" device)."""
 
 import os
 import json
@@ -25,8 +13,7 @@ import logging
 from azure.iot.device import IoTHubDeviceClient, Message
 from seed_graph import EDGES
 
-# Cisco-style syslog lines -- purely cosmetic flavor, logged alongside the
-# actual JSON payload that gets sent to IoT Hub.
+# Cisco-style syslog lines, cosmetic flavor logged alongside the JSON payload.
 SYSLOG_DOWN = "%LINK-3-UPDOWN: Interface GigabitEthernet0/{port}, changed state to down"
 SYSLOG_UP = "%LINK-3-UPDOWN: Interface GigabitEthernet0/{port}, changed state to up"
 

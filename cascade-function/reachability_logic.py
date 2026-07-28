@@ -5,8 +5,7 @@ GATEWAY_ID = "DMZ-FW-SW01"
 
 
 def get_up_neighbors(client: DigitalTwinsClient, twin_id: str) -> list[str]:
-    """Return the target twin IDs of every outgoing connectedTo relationship
-    from this twin whose linkStatus is currently 'up'."""
+    """Target twin IDs of every outgoing connectedTo relationship that's currently 'up'."""
     neighbors = []
     for rel in client.list_relationships(twin_id):
         if rel.get("$relationshipName") == "connectedTo" and rel.get("linkStatus") == "up":
@@ -15,8 +14,7 @@ def get_up_neighbors(client: DigitalTwinsClient, twin_id: str) -> list[str]:
 
 
 def find_reachable_twins(client: DigitalTwinsClient, gateway_id: str) -> set[str]:
-    """BFS outward from the gateway twin over 'up' connectedTo edges only.
-    Returns the set of twin IDs reachable from the gateway (gateway included)."""
+    """BFS from the gateway over 'up' edges. Returns reachable twin IDs, gateway included."""
     visited = {gateway_id}
     frontier = [gateway_id]
     while frontier:
@@ -29,15 +27,10 @@ def find_reachable_twins(client: DigitalTwinsClient, gateway_id: str) -> set[str
 
 
 def recompute_reachability(client: DigitalTwinsClient, gateway_id: str) -> list[tuple[str, str]]:
-    """
-    Recompute reachability for the whole switch graph from the gateway twin,
-    patch any twin whose status changed, and return the list of transitions
-    as (switch_id, "unreachable" | "recovered") so the caller can alert on them.
-
-    Safe to call after ANY link event (up or down) -- it doesn't assume which
-    direction changed, it just re-derives the truth from current linkStatus
-    values and diffs against what's currently stored.
-    """
+    """Recompute reachability from the gateway, patch any twin whose status
+    changed, and return the transitions as (switch_id, "unreachable"|"recovered").
+    Safe to call after any link event -- re-derives truth from current
+    linkStatus rather than assuming what changed."""
     reachable = find_reachable_twins(client, gateway_id)
 
     all_twins = list(client.query_twins("SELECT * FROM digitaltwins"))

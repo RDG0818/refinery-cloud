@@ -8,11 +8,8 @@ const GRAPH_STATUS_URL = "https://func-refinery-cascade.azurewebsites.net/api/gr
 // How often to re-fetch the graph, in milliseconds.
 const POLL_INTERVAL_MS = 3000;
 
-// --- Layout ---
-// The switch mesh isn't tiered like the old tree topology, so nodes are
-// placed evenly around a circle instead of hardcoded per-node. Twin IDs
-// are sorted first so node order (and therefore position) stays stable
-// across polls regardless of what order the API returns them in.
+// Places nodes evenly around a circle; IDs sorted first so layout stays
+// stable across polls regardless of API ordering.
 function computeCircularLayout(twinIds, { radius = 280, centerX = 400, centerY = 320 } = {}) {
   const sortedIds = [...twinIds].sort();
   const positions = {};
@@ -39,9 +36,8 @@ function edgeStyleForLinkStatus(linkStatus) {
   return { stroke: "#888", strokeWidth: 2 };
 }
 
-// Every mesh link exists as two directed relationships (A->B and B->A --
-// see seed_graph.py). Rendering both would draw the same line twice, so
-// only the alphabetically-first direction is kept.
+// Each link is two directed relationships (see seed_graph.py); keep only
+// the alphabetically-first direction so it isn't drawn twice.
 function transformGraphData(apiData) {
   const positions = computeCircularLayout(apiData.twins.map((t) => t.$dtId));
 

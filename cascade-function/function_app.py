@@ -45,12 +45,8 @@ def LinkEventProcessor(azeventhub: func.EventHubEvent):
 
 @app.route(route="GraphStatus", auth_level=func.AuthLevel.ANONYMOUS)
 def GraphStatus(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    Returns the current state of the entire twin graph as JSON, so a
-    frontend dashboard can render it without needing its own ADT
-    credentials.
-    """
-
+    """Returns the current twin graph as JSON so the dashboard can render it
+    without needing its own ADT credentials."""
     client = get_adt_client()
     query = "SELECT * FROM digitaltwins"
     twins = list(client.query_twins(query))
@@ -68,10 +64,8 @@ def GraphStatus(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="AlertHistory", auth_level=func.AuthLevel.ANONYMOUS)
 def AlertHistory(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    Returns the most recent switch alerts (unreachable/recovered events)
-    from Azure SQL, so the dashboard can show an alert feed.
-    """
+    """Returns the most recent switch alerts (unreachable/recovered events)
+    from Table Storage, so the dashboard can show an alert feed."""
     limit = req.params.get("limit", 50)
     alerts = fetch_recent_alerts(limit)
     return func.HttpResponse(json.dumps(alerts), status_code=200, mimetype="application/json")

@@ -1,0 +1,96 @@
+Interview Prep — Refinery DMZ Switch Monitor
+Questions (see answers.txt for matching numbered answers)
+
+NOTE: this repo is a personal rebuild of a project from the Chevron internship.
+Key difference: the internship version used Azure SQL Database; this rebuild
+uses Table Storage because the Azure for Students subscription used here
+blocks new SQL Database logical servers. Swap in real internship specifics
+wherever you have them and this doc doesn't.
+
+--- Project overview ---
+
+1. In one or two sentences, what did you build?
+2. Why did this project exist — what problem was it solving?
+3. Walk me through the architecture at a high level.
+4. Who was the "user" of this system?
+5. What's the current status — is it actually deployed?
+
+--- Tech stack ---
+
+6. What's the full stack, and why each piece?
+7. Why Azure Digital Twins instead of just a graph in a regular database?
+8. Why Python for the Functions?
+9. Why react-flow for the dashboard instead of D3 or a canvas library?
+10. Why poll instead of pushing updates to the dashboard (e.g. WebSockets/SignalR)?
+
+--- Design decisions ---
+
+11. Walk me through the SQL vs. NoSQL decision for the alert log.
+12. What did you give up moving from SQL to Table Storage?
+13. If you had SQL Database available, would you switch back?
+14. Why BFS for reachability instead of something else (Dijkstra, DFS, a graph library)?
+15. Why recompute reachability for the entire graph on every event instead of incrementally updating just the affected branch?
+16. Why does recompute_reachability diff against stored state and only patch/log changed twins, instead of always writing status?
+17. Every link is stored as two directed relationships (A→B and B→A) — why not one undirected relationship?
+18. Why an event-triggered Function (IoT Hub/Event Hub) instead of, say, an HTTP endpoint the simulator calls directly?
+19. Why HTTP-triggered functions with anonymous auth for GraphStatus/AlertHistory instead of something with real auth?
+20. Why GitHub Pages for the dashboard instead of Azure Static Web Apps, which seems like the more natural fit?
+
+--- Setup / deployment walkthrough ---
+
+21. Walk me through standing this up from scratch.
+22. What does main.bicep actually provision, and is it idempotent?
+23. How does the Function authenticate to Azure Digital Twins?
+24. How do you test this end-to-end without waiting for a real network device?
+25. Live log streaming didn't work for you at one point — what happened and how'd you debug it?
+
+--- Bugs / troubleshooting stories ---
+
+26. Tell me about a bug that was hard to track down.
+27. Any other "silently drops messages" failure mode you hit?
+28. Tell me about an infra/deployment error you hit and fixed.
+29. Was there a TLS/cert issue you had to chase down?
+30. Any frontend bugs worth mentioning?
+31. What was the debugging methodology across these — any pattern?
+
+--- Domain / security context ---
+
+32. What's a DMZ, and why does this project model one?
+33. What made working with an OT/IT segmentation model interesting or different from a typical app network diagram?
+34. If this needed to move from simulated telemetry to real switches, what would change?
+35. What's missing before this could be a real production tool?
+
+--- Extensions / "how would you..." / ML angle ---
+
+36. How would you extend this toward predictive/proactive monitoring instead of reactive alerting?
+37. If you had to scale this to hundreds of switches, what breaks first and what would you change?
+38. Why not just use an off-the-shelf network monitoring tool (e.g. Nagios, Zabbix, SolarWinds) instead of building this?
+39. What would you do differently if you started over?
+40. What are you most proud of in this project?
+
+--- The actual Chevron internship project (not the portfolio rebuild) ---
+Known facts to build on: real Cisco switch syslogs as the telemetry source,
+~200+ servers/switches at the actual scale, Azure-hosted, data arrived
+through a DMZ (partly sanitized before it reached you), auth was a reach
+goal never implemented, solo build with a manager who advised on Azure,
+10-week internship, target users were sysadmins, no real scale problems
+at ~200 nodes, used Azure SQL Database (not Table Storage) for the alert
+log. Answers with [bracketed placeholders] need your real specifics filled
+in before you use them — don't guess in the room if you don't remember.
+
+41. This started as a real Chevron internship project — what actually differed from the portfolio rebuild you did later?
+42. Walk me through the real data source — you said Cisco switch logs. How'd that work?
+43. What format were the actual syslogs in, and what did you have to do to turn them into a link up/down event your system could act on?
+44. Why Azure SQL Database for the real version, and what did that give you that Table Storage wouldn't have?
+45. You mentioned the data came through a DMZ before reaching your system — what did that mean for what you could see or trust?
+46. 200+ servers and no real scaling problems — how do you talk about that without it sounding like you never stress-tested it?
+47. Auth was never implemented — how do you talk about that without it sounding like a security hole you shipped and ignored?
+48. Solo build, but with a manager involved — what did that collaboration actually look like day to day?
+49. What was your manager's role versus yours, specifically?
+50. Walk me through how you paced a 10-week internship on this.
+51. Sysadmins were the actual end users — how did that shape what you built?
+52. Did you get real feedback from sysadmins using it? What'd you change because of it?
+53. What happened to the project after the internship ended?
+54. What's the single biggest technical challenge you hit building this solo, at Chevron?
+55. If you'd had more time or scope, what would you have built next, beyond auth?
+56. How much of this can you actually talk about in an interview, given it's real company infrastructure?

@@ -1,14 +1,8 @@
-"""
-seed_graph.py
+"""Standalone script to build the switch twin graph from scratch: uploads
+the DTDL model, creates the twins, wires up connectedTo relationships.
 
-Standalone script (not part of the deployed Function) to build the switch
-twin graph from scratch: uploads the DTDL model, creates all switch twins,
-and wires up the connectedTo relationships between them.
-
-Run with: python seed_graph.py
-Requires ADT_ENDPOINT to be exported in your shell first (same as
-your other isolation testing).
-"""
+Run: python seed_graph.py
+Requires ADT_ENDPOINT."""
 
 import json
 import os

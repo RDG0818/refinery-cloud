@@ -1,0 +1,495 @@
+Interview Prep — Refinery DMZ Switch Monitor
+Sample answers (see questions.txt for matching numbered questions)
+
+--- Project overview ---
+
+1. A network monitoring simulator on Azure Digital Twins that models a
+refinery's DMZ/OT/IT switch mesh. When a link between two switches goes
+down, an Azure Function recomputes which switches are still reachable
+from the gateway, marks the cut-off ones unreachable, logs the
+transition, and emails an alert — and reverses all of that automatically
+the moment a path comes back.
+
+2. Refinery networks segment DMZ/OT/IT for security, and OT gear (PLCs,
+HMIs, historians) controlling physical equipment can't afford silent
+network failures. The project's job was to answer, continuously and
+automatically: "if this link drops, what's still reachable from the
+gateway, and who needs to know right now?" — instead of someone
+discovering a cut-off PLC manually.
+
+3. A simulator (or real switch telemetry) publishes link up/down events
+to IoT Hub. An event-triggered Azure Function (LinkEventProcessor) reads
+each event, patches the link's status on the twin graph in Azure Digital
+Twins, then re-runs a BFS from the gateway twin over "up" links only to
+recompute reachability for the whole mesh. Any twin whose reachability
+changed gets logged to Table Storage and triggers an email via Azure
+Communication Services. Two HTTP-triggered functions (GraphStatus,
+AlertHistory) expose the current graph and recent alerts as JSON. A
+React dashboard polls both and renders the mesh live with react-flow.
+
+4. A network/security operator watching for OT segment isolation — in
+the real internship version, this would feed a NOC-style dashboard; the
+alerting (email, and the transition log) is the actual audit trail of
+"when did we lose the path to this device, and when did it come back."
+
+5. Yes, live end-to-end: simulated telemetry -> IoT Hub -> Function ->
+Digital Twins -> Table Storage -> email -> dashboard, all running on
+real Azure resources (not local emulation), with infra fully captured
+in main.bicep so it's a one-command redeploy.
+
+--- Tech stack ---
+
+6. Azure Digital Twins (graph store + query for the mesh and its live
+state), IoT Hub (event ingestion), Azure Functions in Python
+(event-triggered processing + two HTTP endpoints), Table Storage (alert
+log), Azure Communication Services (email), Bicep (infra as code), React
++ react-flow (dashboard), GitHub Actions + GitHub Pages (dashboard
+deploy).
+
+7. ADT gives me a typed graph model (DTDL) with live property/relationship
+queries out of the box — SELECT * FROM digitaltwins, relationship
+traversal, patch semantics — without hand-rolling a graph schema and
+query layer on top of a relational or document store. It's also the
+Azure-native way to represent "digital twin of physical infrastructure,"
+which was the point of the exercise: the switch mesh IS a twin graph,
+not just data that happens to be graph-shaped.
+
+8. Matched the rest of the Azure SDK ecosystem I was using
+(azure-digitaltwins-core, azure-data-tables, azure-communication-email
+all have solid Python clients), fast to iterate in, and Azure Functions'
+Python programming model (decorators on top of FunctionApp()) keeps the
+three functions in one small function_app.py without a lot of ceremony.
+
+9. It's purpose-built for node/edge graphs — gives me draggable nodes,
+edges, pan/zoom, and a Background/Controls overlay for free. Building
+that interaction layer myself in raw D3 or canvas would've been a lot of
+plumbing for something that isn't the interesting part of this project.
+The interesting part is the reachability logic.
+
+10. Simplicity and cost. At demo scale (7 switches, infrequent link
+flaps), a 3-second poll on GraphStatus and a 5-second poll on
+AlertHistory is indistinguishable from push in practice, and it avoids
+standing up SignalR/websocket infrastructure and connection-state
+management for a marginal UX gain. If this needed to scale to hundreds
+of switches or sub-second alerting, I'd reach for Azure SignalR Service
+or Web PubSub and push transitions from LinkEventProcessor directly.
+
+--- Design decisions ---
+
+11. The original plan was Azure SQL Database, matching the internship
+version — relational fits an append-only log of (switch, event type,
+timestamp) rows fine, and SQL gives you server-side ORDER BY / filtering
+for free. On this rebuild, Azure SQL Database's logical server creation
+was blocked subscription-wide on Azure for Students
+(RegionDoesNotAllowProvisioning in every allowed region — a known
+platform restriction, not a config error). I pivoted to Table Storage:
+it reuses the storage account the Function App already needs for
+AzureWebJobsStorage, needs no new resource type, and the access pattern
+(insert one row per transition, read recent rows) doesn't actually need
+relational features.
+
+12. Server-side ordering and filtering, mainly. Table Storage has no
+ORDER BY, so fetch_recent_alerts pulls entities and sorts in Python —
+fine at low alert volume, but it doesn't scale the way "ORDER BY
+detected_at DESC LIMIT n" with an index would. I also gave up relational
+query flexibility (joins, aggregate queries) I'd get for a richer alert
+history feature later — not needed for what this does today, but it's
+the tradeoff.
+
+13. For this exact workload — a single append-only table, low volume,
+one simple recency query — Table Storage is genuinely a fine, cheaper
+fit, so I probably wouldn't. It's the right choice on its merits, not
+just a workaround. It'd change my answer if I needed richer queries
+(e.g. "alerts per switch per day," joins against switch metadata) or
+transactional guarantees across multiple tables.
+
+14. The links are unweighted — a switch is either reachable or not,
+there's no "shortest path" cost to optimize, so Dijkstra is unnecessary
+complexity. BFS and DFS are equivalent here in what they compute; BFS
+was the natural fit conceptually since I was thinking about it as
+concentric rings of reachability from the gateway. I didn't reach for a
+graph library since it's a straightforward traversal over ADT's own
+relationship API — pulling the whole mesh into something like networkx
+would be an extra dependency and an extra data-sync step for no real
+benefit at 7 nodes.
+
+15. Correctness and simplicity over micro-optimization. A single link
+event can affect reachability of switches several hops away, and
+incremental update logic (figuring out exactly which twins are
+invalidated by one edge flipping) is more complex and more
+failure-prone than "just recompute the source of truth and diff against
+stored state." At 7 switches the full BFS is trivially cheap; if this
+had to scale to thousands of nodes with frequent flaps, that's where I'd
+revisit it — but I'd only pay that complexity cost once the naive
+version actually became the bottleneck.
+
+16. Two reasons: it makes the transition list mean something (only
+actual unreachable<->online flips generate an alert/email, not every
+event), and it avoids pointless writes to ADT for twins whose status
+didn't change. Alert-on-every-poll would drown the email inbox and the
+alert table in noise for links that were never actually affected.
+
+17. ADT relationships are inherently directed (source twin owns the
+relationship), so an undirected "link" has to be represented as two
+directed edges if I want to traverse it either direction during BFS.
+The tradeoff is I have to keep both directions in sync on every link
+event (LinkEventProcessor patches both), and the dashboard has to
+dedupe them when rendering (keeps only the alphabetically-first
+direction so it doesn't draw the same line twice).
+
+18. Event Hub-triggered functions decouple ingestion from processing
+and match how real switch telemetry would actually arrive — as a stream
+of device events, not synchronous request/response calls a device makes
+and waits on. It also means IoT Hub buffers and retries delivery if the
+Function is briefly unavailable, which an HTTP call from the device
+wouldn't get for free.
+
+19. Deliberately deferred, and I'd call that out unprompted in an
+interview rather than have it be caught — this is a portfolio/demo
+project where the read-only graph/alert data isn't sensitive, so I
+prioritized getting the actual reachability logic and the pipeline end-
+to-end working. In a real deployment I'd put these behind Function-level
+keys at minimum, and more likely Azure AD auth via Easy Auth or APIM in
+front, especially since this is OT-adjacent network topology data.
+
+20. Tried Static Web Apps first — it only deploys into 5 regions, and
+every one was blocked by a tenant-level policy on this subscription
+(RequestDisallowedByAzure), which is common on institutional Azure for
+Students accounts and not fixable by picking a different region. GitHub
+Pages was the pragmatic fallback: free, already had GitHub Actions wired
+up, and static hosting is all a Vite-built SPA needs — it just calls the
+Function endpoints directly, no server-side rendering required.
+
+--- Setup / deployment walkthrough ---
+
+21. Bicep deploys everything in one shot — storage account, ADT
+instance, IoT Hub, Function App + hosting plan, Table Storage table, ACS
+email, and the Function's managed-identity role assignment onto ADT.
+After that: grant myself ADT Data Owner (control-plane resource
+ownership doesn't include data-plane permissions, that's separate
+RBAC), run seed_graph.py to upload the DTDL model and create the 7
+switch twins plus mesh links, publish the Function code, register an
+IoT Hub device for the simulator, then run the simulator and watch
+alerts land in the table and emails go out.
+
+22. Storage account + table service + the SwitchAlerts table, the ADT
+instance, IoT Hub, Application Insights, a Consumption hosting plan, the
+Function App, ACS email service + managed domain + communication
+service, and the role assignment giving the Function App's managed
+identity ADT Data Owner. It's idempotent — re-running the same
+deployment against existing resources updates them in place rather than
+erroring or duplicating.
+
+23. DefaultAzureCredential — locally that resolves through Azure CLI
+login during development; deployed, the Function App has a
+system-assigned managed identity that's granted the "Azure Digital
+Twins Data Owner" role on the ADT instance via the bicep template, so
+there's no connection string or secret to manage for that hop at all.
+
+24. dmz_simulator.py — a standalone script (not deployed, local-only)
+that publishes simulated link up/down telemetry to IoT Hub on a
+heartbeat, with a random chance each tick of flapping a link down and
+recovering it 15-45 seconds later. It uses one shared IoT Hub device
+since LinkEventProcessor reads the source/target switch out of the
+message body, not IoT Hub device identity — so I didn't need to
+register one device per switch.
+
+25. az webapp log tail and func azure functionapp logstream both 404 on
+the Linux Consumption plan — a known platform limitation, not a
+misconfiguration. So the debugging order became: check
+FunctionExecutionCount metric first (fastest, near-real-time,
+independent of App Insights), then check the actual ground truth (table
+rows / twin state), then Application Insights traces/exceptions last,
+since ingestion there can lag several minutes and an empty result isn't
+proof nothing happened.
+
+--- Bugs / troubleshooting stories ---
+
+26. The Event Hub connection string had a doubled sb:// scheme — the
+bicep template built it as 'Endpoint=sb://${...eventHubEndpoints.events.endpoint}',
+but that .endpoint property already includes the sb:// prefix, so the
+real value was "Endpoint=sb://sb://...", a malformed URI. The Function's
+Event Hub trigger failed to bind completely silently — no error in host
+status, nothing in the logs, it just never received a single message. I
+diagnosed it by testing the exact connection string directly against
+azure-eventhub's EventHubConsumerClient, completely outside of Azure
+Functions — that isolates "is the connection string/entity/permissions
+actually correct" from "is the Functions binding layer working." Fixed
+by dropping the redundant sb:// in the bicep interpolation.
+
+27. Yes — separately, IoT Hub's built-in $fallback route was disabled
+(routing.fallbackRoute.isEnabled: false) with no custom routes defined,
+so messages ingressed into the hub successfully (dailyMessageQuotaUsed
+climbing) but never reached the Event Hub-compatible endpoint the
+Function was listening on (d2c.endpoints.egress.builtIn.events metric
+stuck at 0). Same root lesson as the doubled sb:// bug: check the IoT
+Hub-side ingress vs. egress metrics against each other before assuming
+the Function is the problem.
+
+28. RoleAssignmentExists — Azure role assignments are unique per
+(scope, principalId, roleDefinitionId) regardless of the assignment's
+own name. When a prior failed deployment regenerated the Function App's
+managed identity, the old role assignment for the stale principalId
+became orphaned, and bicep's deterministic guid(...)-named assignment
+for the current identity collided with a pre-existing assignment
+covering the same triple under a different name. Fixed by listing role
+assignments scoped to the ADT resource, deleting the stale one, and
+redeploying.
+
+29. Running the simulator, azure-iot-device (which rides on paho-mqtt)
+threw a generic "ClientError: Error in the IoTHub client due to TLS
+exchanges". Root cause was several layers down — my python resolved
+into a conda environment whose OpenSSL build didn't see the system CA
+trust store. I found that by reproducing the connect call directly and
+printing the full exception chain (e.__cause__), which surfaced
+ssl.SSLCertVerificationError: unable to get local issuer certificate
+underneath the generic wrapper. Fixed by pointing the stdlib ssl module
+at certifi's bundled CA certs (SSL_CERT_FILE).
+
+30. The alert panel was rendering cut off / mispositioned on wide
+viewports — looked like a flex/positioning bug at first, but the real
+cause was leftover Vite scaffold CSS (#root { max-width: 1126px; margin:
+0 auto }) combined with my container using width: 100vw. Inside a
+centered, capped #root, a 100vw-wide element starts at #root's left
+inset and extends a full viewport-width further right — pushing
+anything pinned to its right edge off-screen above 1126px wide. Fixed
+by using position: fixed; inset: 0 on the container so it anchors to
+the real viewport instead of #root's box.
+
+31. Ground truth over logs, every time. Live log streaming wasn't
+reliably available (platform limitation), and Application Insights
+lags — so the pattern was always: check the cheapest independent signal
+first (execution count metric, IoT Hub ingress/egress metrics, actual
+table rows), and when something failed silently (both the sb:// bug and
+the fallback-route bug were silent failures), isolate the suspect
+component and test it directly outside the framework, rather than
+guessing from stack traces I didn't have.
+
+--- Domain / security context ---
+
+32. A DMZ (demilitarized zone) is a network segment that sits between
+two zones of different trust — here, IT (corporate/business network)
+and OT (operational technology: PLCs, HMIs, historians controlling
+physical refinery equipment) — so a compromise or failure on one side
+can't directly reach the other. This project's mesh models that: a
+DMZ-FW-SW01 gateway switch, DMZ/OT/IT-zoned switches behind it, with one
+redundant loop and one single-point-of-failure tail, so you can see
+exactly which OT devices get isolated when a specific link fails.
+
+33. The stakes framing is different — this isn't "is the API slow," it's
+"is a switch controlling physical equipment still reachable for
+monitoring/control." That's why reachability (not just link health)
+mattered: a switch three hops from a single dead link is just as cut off
+as the switch directly attached to it, and that's the thing that needed
+to trigger an alert, not just the raw up/down event.
+
+34. The ingestion contract stays the same conceptually (link up/down
+events into IoT Hub), but real switches would need actual telemetry —
+SNMP traps, syslog, or a collector translating switch-native events into
+this JSON shape. dmz_simulator.py explicitly stands in for that today;
+it'd be the first thing swapped for something reading a real device
+feed.
+
+35. Authentication on the HTTP endpoints (called out explicitly as
+deliberately deferred), real telemetry ingestion instead of the
+simulator, retention/alerting policy on the alert log (right now it's
+unbounded), and probably a way to distinguish real link failures from
+planned maintenance so you're not alerting on expected downtime.
+
+--- Extensions / "how would you..." / ML angle ---
+
+36. The transition log in Table Storage is already the training data for
+that — timestamped unreachable/recovered events per switch. With enough
+volume you could look at flap frequency per link (is this link
+degrading — going up/down more often over time) and flag it before it
+causes an outage, rather than only alerting after the fact. That's a
+straightforward time-series/anomaly-detection problem on top of data
+this system already collects, not a rebuild.
+
+37. Table Storage's client-side sort in fetch_recent_alerts is the first
+thing — it pulls the whole table and sorts in Python, fine at demo
+volume, not at scale; I'd add a proper indexed timestamp query or move
+back to something with server-side ordering. Full-graph BFS on every
+event is next — still cheap at hundreds of nodes, but I'd start
+partitioning the mesh or debouncing bursts of flapping links before
+recomputing. And polling every 3s from every dashboard client stops
+being free at that point — that's where I'd push toward SignalR/Web
+PubSub instead.
+
+38. Those are built for exactly this kind of monitoring and I wouldn't
+reinvent them for a real production deployment. The point of building
+this was to learn the underlying primitives — modeling infrastructure as
+a live typed graph in Azure Digital Twins, writing the reachability
+logic myself, wiring an event-driven pipeline end to end on Azure — not
+to replace a mature NMS. It's also a lot easier to demo and reason about
+in an interview than pointing at a Zabbix dashboard.
+
+39. I'd pin down the alert-log storage decision earlier — losing time to
+Azure SQL Database provisioning failing on every allowed region before
+pivoting to Table Storage was avoidable if I'd checked Azure for
+Students' SQL restriction upfront. I'd also build the "silent failure"
+debugging habit in from the start (test each hop's connection
+independently) rather than learning it reactively from the doubled
+sb:// bug.
+
+40. That the reachability model is actually correct under recovery, not
+just failure — recompute_reachability doesn't assume which link changed
+or in which direction, it just re-derives the full set of reachable
+twins from current link state and diffs against what's stored. That
+means a switch marked unreachable becomes online again the instant any
+path back to the gateway exists, even if it's a different link than the
+one that originally failed — which matters a lot given the mesh has a
+redundant loop specifically so that failover case exists to test.
+
+--- The actual Chevron internship project (not the portfolio rebuild) ---
+
+41. Same core idea — reachability from a gateway, recomputed on link
+change, alerted on transition — but the real version ran against ~200+
+actual servers/switches at the refinery, ingested real Cisco syslogs
+instead of a simulator, used Azure SQL Database instead of Table
+Storage, and never got auth built (a reach goal I ran out of runway
+for). The portfolio rebuild is a from-scratch, from-memory version I
+built afterward on my own subscription, sized down to 7 switches and
+swapped to Table Storage because that subscription blocks SQL Database
+provisioning — same architecture, smaller and self-funded.
+
+42. [Fill in: how the syslog feed actually reached your system — e.g.
+a forwarder/collector pushing to an endpoint you controlled, or you
+polling/reading from a log aggregation tool already in place at
+Chevron.] The short version for an interview: real network gear
+generates continuous syslog output, and my job was turning the subset
+of that stream that mattered (interface up/down events) into the same
+link-event shape the rest of the pipeline already consumed — so
+downstream of ingestion, the reachability logic didn't care whether the
+event came from a simulator or a real switch.
+
+43. Cisco interface state changes show up as lines like
+`%LINK-3-UPDOWN: Interface GigabitEthernet0/<port>, changed state to
+down` — that's a real Cisco syslog format, and it's actually why the
+portfolio simulator logs cosmetic lines in that same style. [Fill in:
+what you used to parse/match those lines — regex against raw syslog
+text, a log shipper's structured output, a specific field you keyed
+off.] The parsing had to pull out which two devices were on either end
+of the link and the new state, then hand that off as the same
+sourceSwitch/targetSwitch/linkStatus shape the reachability function
+expects.
+
+44. Azure SQL Database gave me real relational querying — ORDER BY,
+filtering, joins against server/switch metadata — over an alert log
+that was going to grow past what client-side sorting handles well at
+200+ nodes, which is exactly the ceiling the portfolio version's Table
+Storage approach hits. [Fill in if you remember: whether you used any
+specific SQL features — indexes, stored procs, a particular schema
+shape.] It was also just the default, sensible choice for a structured
+audit log inside a company's existing Azure environment, versus my
+personal rebuild where SQL Database happened to be blocked by the
+subscription tier.
+
+45. DMZ segmentation meant the telemetry reaching my system wasn't raw
+device output from every zone — it had already crossed a trust
+boundary, so [fill in: what specifically got filtered/limited — e.g.
+you only saw DMZ/IT-facing switch events directly, or OT-side data was
+relayed rather than direct]. Practically, that shaped what I could
+verify myself versus what I had to trust was accurate upstream — I was
+consuming a feed, not tapping every switch directly, which is a
+realistic constraint for anyone building monitoring in a segmented OT
+network rather than a green-field one.
+
+46. I'd rather be straight about this than oversell it: 200+ nodes with
+infrequent link changes never pushed the reachability recompute or the
+alerting path anywhere close to a real bottleneck — a full graph BFS
+over a few hundred nodes is milliseconds of work. I didn't manufacture
+artificial load to "prove" scale during a 10-week internship because
+that wasn't the goal; the goal was a correct, working monitor. If asked
+where it would start to strain, my honest answer is the same one from
+the portfolio project: client-side sorting on the alert query and
+naive full-graph recompute on every event are the first things I'd
+revisit, well before 200 nodes but probably somewhere in the thousands.
+
+47. I'd own it directly rather than dance around it: auth was a reach
+goal I identified going in, and with 10 weeks and a solo build, I
+prioritized getting the core reachability/alerting pipeline correct and
+deployed over adding an access-control layer on top of it. I'd frame
+what "done" would've looked like — Azure AD-backed auth on the HTTP
+endpoints, since it was already an Azure-hosted, presumably
+AD-integrated environment — so it's clear I know what the gap is and
+what closing it takes, not that I didn't think about it.
+
+48. [Fill in specifics you remember: cadence of check-ins, what your
+manager actually reviewed or unblocked.] The shape of it: I owned the
+implementation solo — the code, the reachability logic, the Azure
+resources — and my manager was the person I talked to about Azure
+itself, presumably things like what resources/regions were available to
+use, how the environment was set up, and steering around
+company-specific constraints I wouldn't have known walking in.
+
+49. Mine: design and build the actual system — ingestion, the
+reachability logic, the data store, the alerting. Theirs: Azure/environment
+guidance — [fill in: did they set expectations on scope, review your
+architecture, handle access/permissions for you, or mostly just answer
+questions when you got stuck]. Worth being precise about this in an
+interview since "solo build, manager advised on Azure" is a specific
+and credible answer — vaguer versions ("we built it together") invite
+follow-up questions you don't want.
+
+50. [Fill in: your actual week-by-week arc if you remember it — e.g.
+weeks 1-2 learning ADT/the environment and scoping, middle weeks on
+ingestion + reachability logic, last weeks on alerting/dashboard and
+hardening.] If you don't remember specifics, a safe honest framing is:
+early weeks went to understanding the DMZ/OT network layout and what
+data you'd actually have access to, the middle stretch was building and
+testing the reachability/alerting pipeline against real switches, and
+the tail end was the dashboard and whatever polish time allowed —
+with auth identified but not reached.
+
+51. Sysadmins care about "what's down and what does it affect" faster
+than a raw log stream tells them — that's the whole reason reachability
+(not just link status) mattered: a sysadmin doesn't want to mentally
+trace which servers a dead link isolates, they want the system to have
+already done that and just show them the affected set. [Fill in if
+true: any specific UI/alerting choice you made because of sysadmin
+feedback — e.g. what info they wanted in the alert email, how they
+wanted the dashboard laid out.]
+
+52. [Fill in: did you actually get feedback, and what changed because
+of it — e.g. what they wanted to see in an alert, a false-positive
+you fixed, a dashboard layout change.] If you're not sure you have a
+concrete example, it's fine to say the primary feedback loop was your
+manager relaying what mattered to the ops side, rather than direct
+sysadmin usability sessions — just don't invent a specific anecdote you
+can't back up if pushed on it.
+
+53. [Fill in: do you know what happened after the internship ended —
+handed off to a team, left as a prototype, informed a later initiative,
+or you genuinely don't know.] It's completely fine to say you don't
+know what happened to it post-internship if that's true — that's a
+normal answer for a 10-week internship project and better than
+guessing.
+
+54. [Fill in your real answer here — likely candidates given what you've
+described: getting real syslog parsing right against actual Cisco
+output format quirks, figuring out the DMZ data-access constraints,
+or learning Azure Digital Twins/the broader Azure environment from
+scratch solo in a live company subscription.] Whatever it was, frame it
+the same way the portfolio bugs are framed: what broke, how you
+isolated it, what you changed — recruiters want the diagnostic process,
+not just "it was hard."
+
+55. Auth first, since it was already the identified gap. Beyond that:
+[fill in anything you actually considered — e.g. a richer dashboard for
+sysadmins, alerting via something other than email like Teams/Slack,
+handling planned maintenance windows so you're not alerting on expected
+downtime, retention/archival policy on the alert log]. Tie whatever you
+pick back to the sysadmin end-user — that's the throughline that makes
+the answer coherent rather than a generic feature list.
+
+56. Stick to architecture, technical decisions, and what you personally
+built — the same things covered above (ingestion approach, reachability
+algorithm, data store choice, deployment model, what you'd add next).
+Avoid specifics that identify real infrastructure: don't name actual
+hostnames/IPs/switch identifiers, internal tool names beyond what's
+already public, or anything about Chevron's actual security posture
+beyond "DMZ-segmented OT network," which is a standard, publicly
+understood industrial-network pattern, not a disclosure. If a recruiter
+pushes for a detail you're not sure is okay to share, it's fine to say
+so directly rather than guess.
